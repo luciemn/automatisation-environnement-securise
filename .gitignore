@@ -1,0 +1,15 @@
+# Coffres et volumes chiffrés
+*.img
+*.luks
+
+# Clefs et secrets
+*.key
+*.pem
+*.gpg
+*.asc
+.env
+
+# Fichiers temporaires et journaux locaux
+*.log
+*.tmp
+montage/
