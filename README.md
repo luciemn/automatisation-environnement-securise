@@ -6,35 +6,35 @@ Directory structure:
 
 Files Content:
 
-================================================
-FILE: README.md
-================================================
+README.md
 # automatisation-environnement-securise
 
 ## Objectif
 
 Ce dépôt contient un script Bash d’administration Linux permettant de gérer un coffre sécurisé stocké dans un fichier de 5 Go. Le coffre utilise LUKS pour le chiffrement et ext4 comme système de fichiers.
 
-Le script sépare les trois actions principales demandées:
+Le script couvre désormais deux ensembles d’actions:
 
-- installer le coffre;
-- ouvrir et monter le coffre;
-- démonter et fermer le coffre.
+- le cycle du coffre: installation, ouverture, montage, démontage et fermeture;
+- la gestion GPG: génération d’une paire de clefs, export vers le coffre et import depuis le coffre.
 
 ## État actuel
 
-La mise en place initiale du coffre a été validée avec les conventions du projet. Le script comprend désormais un menu interactif pour piloter son cycle de vie:
+Le cycle LUKS et les échanges GPG ont été validés avec les conventions du projet. Le menu principal pilote le coffre et donne accès à un sous-menu GPG:
 
 ~~~text
 1) Installer
 2) Ouvrir
 3) Fermer
-4) Quitter
+4) GPG
+5) Quitter
 ~~~
 
-Le menu ne déclenche aucune opération privilégiée lorsqu’une saisie est invalide. Une ouverture ou une fermeture déjà satisfaite produit un message explicite sans répéter l’opération.
+Le sous-menu GPG permet de générer une paire de clefs, d’exporter une clef publique ou privée vers le coffre et d’importer une clef depuis celui-ci. Les actions d’échange refusent de continuer lorsque le coffre n’est pas ouvert et monté.
 
-Les fonctions GPG, la configuration SSH, l’import des hôtes et l’alias `evsh` seront ajoutés dans les étapes suivantes du projet.
+Une saisie invalide ne déclenche aucune commande GPG ni opération privilégiée. Une ouverture ou une fermeture déjà satisfaite produit un message explicite sans répéter l’opération.
+
+La configuration SSH, l’import des hôtes et l’alias `evsh` restent à intégrer.
 
 ## Prérequis
 
@@ -62,6 +62,11 @@ command -v tail
 command -v stat
 command -v find
 command -v dirname
+command -v sort
+command -v awk
+command -v gpg
+command -v id
+command -v chown
 ~~~
 
 ## Fichiers du dépôt
@@ -150,7 +155,31 @@ Si le démontage échoue, le mapping reste ouvert afin d’éviter une fermeture
 
 Si le coffre est déjà fermé, le script l’indique sans lancer d’opération destructive.
 
-### `4) Quitter`
+### `4) GPG`
+
+Cette action ouvre un sous-menu dédié:
+
+~~~text
+1) Générer une paire de clefs
+2) Exporter une clef publique vers le coffre
+3) Exporter une clef privée vers le coffre
+4) Importer une clef publique depuis le coffre
+5) Importer une clef privée depuis le coffre
+6) Retour
+~~~
+
+La génération reste interactive avec `gpg --full-generate-key`: l’algorithme, la taille, l’identité, la date d’expiration et la phrase secrète ne sont pas imposés ni stockés par le script.
+
+Les exports utilisent l’empreinte complète de la clef dans le nom du fichier:
+
+- clef publique: `gpg/public/<empreinte>.asc`;
+- clef privée: `gpg/private/<empreinte>-secret.asc`.
+
+L’export privé exige une confirmation explicite. Le fichier est créé avec les permissions `600` dans un dossier `700`. Aucun export existant n’est écrasé silencieusement.
+
+Les imports sont limités aux fichiers `.asc` et `.gpg` présents dans le dossier public ou privé concerné. L’import d’une clef privée exige également une confirmation explicite.
+
+### `5) Quitter`
 
 Le script s’arrête sans modifier l’état du coffre.
 
@@ -247,6 +276,7 @@ Ne jamais enregistrer dans Git:
 - le contenu de `montage_coffre/`;
 - une phrase secrète LUKS;
 - une clef privée;
+- un export de clef `.asc` ou `.gpg`;
 - un fichier `.env` contenant des secrets;
 - des journaux contenant des données sensibles.
 
@@ -270,22 +300,45 @@ git diff --cached
 - ne pas fermer le mapping si le démontage échoue;
 - ne pas considérer l’existence du conteneur comme une preuve qu’il est ouvert ou monté.
 
+## Validation GPG
+
+Après ouverture du coffre, vérifier les dossiers et leurs permissions:
+
+~~~bash
+stat -c '%U:%G %a %n' \
+    montage_coffre/gpg \
+    montage_coffre/gpg/public \
+    montage_coffre/gpg/private
+~~~
+
+Résultats attendus:
+
+- l’utilisateur courant possède l’arborescence GPG;
+- `gpg/private` possède les permissions `700`;
+- un export privé possède les permissions `600`;
+- les fichiers exportés sont non vides;
+- l’empreinte importée apparaît dans `gpg --list-keys` ou `gpg --list-secret-keys`.
+
+Inventaire du trousseau, sans affichage de matière secrète:
+
+~~~bash
+gpg --list-keys --keyid-format LONG --fingerprint
+gpg --list-secret-keys --keyid-format LONG --fingerprint
+~~~
+
 ## Limites actuelles
 
-Le script couvre actuellement le cycle du coffre LUKS. Les fonctionnalités suivantes restent à intégrer au script Bash final:
+Le script couvre actuellement le cycle du coffre LUKS et la gestion GPG. Les fonctionnalités suivantes restent à intégrer au script Bash final:
 
-- génération automatisée d’une paire de clefs GPG;
-- import et export des clefs GPG publiques et privées;
 - fichier modèle de configuration SSH utilisable avec `ssh -F`;
 - import d’un hôte depuis `$HOME/.ssh/config`;
 - copie des clefs SSH et adaptation de `IdentityFile`;
-- fichier d’alias contenant `evsh` et lien symbolique associé.
+- fichier d’alias contenant `evsh` et lien symbolique associé;
+- documentation et présentation finales.
 
 
 
-================================================
-FILE: mise_en_place_environnement_securise.sh
-================================================
+mise_en_place_environnement_securise.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -333,6 +386,5 @@ sudo chmod 700 "$COFFRE_MONTAGE/ssh/keys"
 # Refermer proprement.
 sudo umount "$COFFRE_MONTAGE"
 sudo cryptsetup close "$COFFRE_MAPPING"
-
 
 
