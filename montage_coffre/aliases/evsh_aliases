@@ -1,0 +1,1 @@
+alias evsh="ssh -F montage_coffre/ssh/config_ssh"

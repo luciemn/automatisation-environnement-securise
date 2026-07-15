@@ -1,0 +1,11 @@
+Host exemple
+    HostName 192.0.2.10
+    User utilisateur
+    IdentityFile montage_coffre/ssh/keys/id_exemple
+    IdentitiesOnly yes
+
+Host test-local
+    HostName localhost
+    User lucie
+    Port 22
+    IdentityFile montage_coffre/ssh/keys/id_ed25519_projet

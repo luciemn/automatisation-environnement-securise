@@ -183,7 +183,7 @@ montage_coffre/
 |---|---|
 | `gpg/public` | stockage des clefs publiques GPG exportées |
 | `gpg/private` | stockage des clefs privées GPG exportées |
-| `ssh/config` | fichier de configuration SSH |
+| `ssh/config_ssh` | fichier de configuration SSH |
 | `ssh/keys` | clefs SSH importées |
 | `aliases` | fichier d’alias contenant `evsh` |
 
@@ -259,13 +259,13 @@ Le menu SSH permet de:
 Le fichier de configuration est créé ici:
 
 ~~~text
-montage_coffre/ssh/config/config
+montage_coffre/ssh/config_ssh
 ~~~
 
 Il peut être utilisé avec:
 
 ~~~bash
-ssh -F montage_coffre/ssh/config/config exemple
+ssh -F montage_coffre/ssh/config_ssh exemple
 ~~~
 
 ### Alias `evsh`
@@ -279,7 +279,7 @@ montage_coffre/aliases/evsh_aliases
 Il contient au minimum:
 
 ~~~bash
-alias evsh="ssh -F montage_coffre/ssh/config/config"
+alias evsh="ssh -F montage_coffre/ssh/config_ssh"
 ~~~
 
 Un lien symbolique est créé vers:

@@ -10,13 +10,12 @@ ALIAS_FICHIER="${ALIAS_FICHIER:-$HOME/.evsh_aliases}"
 
 DOSSIER_GPG_PUBLIC="gpg/public"
 DOSSIER_GPG_PRIVATE="gpg/private"
-DOSSIER_SSH_CONFIG="ssh/config"
 DOSSIER_SSH_KEYS="ssh/keys"
 DOSSIER_ALIAS="aliases"
 
 GPG_PUBLIC="$COFFRE_MONTAGE/gpg/public"
 GPG_PRIVATE="$COFFRE_MONTAGE/gpg/private"
-SSH_CONFIG_DIR="$COFFRE_MONTAGE/ssh/config"
+SSH_CONFIG="$COFFRE_MONTAGE/ssh/config_ssh"
 SSH_KEYS_DIR="$COFFRE_MONTAGE/ssh/keys"
 ALIAS_DIR="$COFFRE_MONTAGE/aliases"
 ALIAS_LINK="$HOME/.evsh_aliases"
@@ -72,7 +71,7 @@ installer() {
     sudo mount "$(mapper)" "$COFFRE_MONTAGE"
 
     info "Création des dossiers internes"
-    sudo mkdir -p "$GPG_PUBLIC" "$GPG_PRIVATE" "$SSH_CONFIG_DIR" "$SSH_KEYS_DIR" "$ALIAS_DIR"
+    sudo mkdir -p "$GPG_PUBLIC" "$GPG_PRIVATE" "$COFFRE_MONTAGE/ssh" "$SSH_KEYS_DIR" "$ALIAS_DIR"
 
     sudo chown -R "$(id -u):$(id -g)" "$COFFRE_MONTAGE"
 
@@ -233,7 +232,7 @@ import_gpg_prive() {
 creer_config_ssh() {
     ouvrir || return 1
 
-    config="$SSH_CONFIG_DIR/config"
+    config="$SSH_CONFIG"
     alias_file="$ALIAS_DIR/evsh_aliases"
 
     printf '%s\n' \
@@ -309,8 +308,8 @@ import_ssh() {
         bloc="$(printf '%s\n' "$bloc" | sed "s#^[[:space:]]*IdentityFile[[:space:]].*#    IdentityFile $SSH_KEYS_DIR/$(basename "$identity")#I")"
     fi
 
-    printf '\n%s\n' "$bloc" >> "$SSH_CONFIG_DIR/config"
-    chmod 600 "$SSH_CONFIG_DIR/config"
+    printf '\n%s\n' "$bloc" >> "$SSH_CONFIG"
+    chmod 600 "$SSH_CONFIG"
 
     info "Configuration SSH importée pour $hote"
 }
@@ -318,7 +317,7 @@ import_ssh() {
 menu_gpg() {
     while true; do
         echo
-        echo "Cryptographie GPG"
+        echo " Cryptographie GPG"
         echo "1) Créer une clef GPG et exporter la clef publique"
         echo "2) Exporter une clef publique vers le coffre"
         echo "3) Exporter une clef privée vers le coffre"
@@ -393,7 +392,7 @@ menu_ssh() {
 menu_principal() {
     while true; do
         echo
-        echo "Environnement sécurisé"
+        echo " Environnement sécurisé"
         echo "1) Installer l’environnement"
         echo "2) Ouvrir l’environnement"
         echo "3) Fermer l’environnement"
