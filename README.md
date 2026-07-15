@@ -3,164 +3,197 @@ Directory structure:
     ├── README.md
     └── mise_en_place_environnement_securise.sh
 
-
-Files Content:
-
-README.md
+================================================
+FILE: README.md
+================================================
 # automatisation-environnement-securise
 
 ## Objectif
 
-Ce dépôt contient un script Bash d’administration Linux permettant de gérer un coffre sécurisé stocké dans un fichier de 5 Go. Le coffre utilise LUKS pour le chiffrement et ext4 comme système de fichiers.
+Ce dépôt contient un script Bash d’administration Linux permettant de gérer un environnement sécurisé chiffré.
 
-Le script couvre désormais deux ensembles d’actions:
+Le script permet de:
 
-- le cycle du coffre: installation, ouverture, montage, démontage et fermeture;
-- la gestion GPG: génération d’une paire de clefs, export vers le coffre et import depuis le coffre.
+- mettre en place un coffre sécurisé de 5 Go
+- ouvrir le coffre
+- fermer le coffre
+- gérer des clefs GPG
+- préparer une configuration SSH
+- créer un alias `evsh`
+- importer une configuration SSH existante par `Host`
 
-## État actuel
+Le projet répond au sujet de partiel **Linux administration avancée**.
 
-Le cycle LUKS et les échanges GPG ont été validés avec les conventions du projet. Le menu principal pilote le coffre et donne accès à un sous-menu GPG:
+## Résultat attendu
+
+Le coffre est construit selon cette chaîne:
 
 ~~~text
-1) Installer
-2) Ouvrir
-3) Fermer
-4) GPG
-5) Quitter
+coffre.img
+→ LUKS
+→ /dev/mapper/sec_env
+→ ext4
+→ montage_coffre/
 ~~~
 
-Le sous-menu GPG permet de générer une paire de clefs, d’exporter une clef publique ou privée vers le coffre et d’importer une clef depuis celui-ci. Les actions d’échange refusent de continuer lorsque le coffre n’est pas ouvert et monté.
-
-Une saisie invalide ne déclenche aucune commande GPG ni opération privilégiée. Une ouverture ou une fermeture déjà satisfaite produit un message explicite sans répéter l’opération.
-
-La configuration SSH, l’import des hôtes et l’alias `evsh` restent à intégrer.
+| Élément | Rôle |
+|---|---|
+| `coffre.img` | fichier conteneur de 5 Go |
+| LUKS | chiffrement du coffre |
+| `/dev/mapper/sec_env` | volume déchiffré temporaire |
+| ext4 | système de fichiers utilisé dans le coffre |
+| `montage_coffre/` | point de montage du coffre |
 
 ## Prérequis
 
-- une machine Linux ou une machine virtuelle Linux;
-- un terminal Bash;
-- les droits `sudo`;
-- plus de 5 Gio d’espace disponible pour une nouvelle installation;
-- les commandes nécessaires au cycle LUKS.
+Le script doit être lancé sur une machine Linux avec:
+
+- Bash
+- les droits `sudo`
+- plus de 5 Go d’espace disponible
+- `cryptsetup`
+- `mkfs.ext4`
+- `mount`
+- `umount`
+- `mountpoint`
+- `gpg`
+- `awk`
+- `sed`
+- `find`
+- `cp`
+- `ln`
+- `truncate`
 
 Vérification rapide:
 
 ~~~bash
-command -v bash
-command -v sudo
 command -v cryptsetup
 command -v mkfs.ext4
 command -v mount
 command -v umount
 command -v mountpoint
-command -v mkdir
-command -v chmod
-command -v truncate
-command -v df
-command -v tail
-command -v stat
-command -v find
-command -v dirname
-command -v sort
-command -v awk
 command -v gpg
-command -v id
-command -v chown
+command -v truncate
 ~~~
 
 ## Fichiers du dépôt
 
-- `mise_en_place_environnement_securise.sh`: script Bash principal;
-- `README.md`: mode d’emploi et conventions;
-- `.gitignore`: exclusions des coffres, clefs, secrets, montages et journaux locaux.
+| Fichier | Rôle |
+|---|---|
+| `mise_en_place_environnement_securise.sh` | script principal du projet |
+| `README.md` | documentation d’utilisation |
+| `.gitignore` | fichier conseillé pour exclure le coffre, le montage et les secrets |
 
-## Conventions
+## Conventions du projet
 
 | Élément | Valeur |
 |---|---|
-| Script principal | `mise_en_place_environnement_securise.sh` |
-| Fichier conteneur | `coffre-luks.img` |
-| Taille | `5G` |
-| Mapping LUKS | `coffre_luks` |
-| Périphérique ouvert | `/dev/mapper/coffre_luks` |
+| Fichier conteneur | `coffre.img` |
+| Taille du coffre | `5G` |
+| Mapping LUKS | `sec_env` |
 | Point de montage | `montage_coffre` |
-| Système de fichiers | `ext4` |
+| Script principal | `mise_en_place_environnement_securise.sh` |
+| Alias SSH | `evsh` |
 
-Les chemins du conteneur et du point de montage sont relatifs au dossier du script.
+## Installation et lancement
 
-## Installation du projet
-
-Cloner le dépôt et vérifier le script:
+Cloner le dépôt:
 
 ~~~bash
 git clone "https://github.com/luciemn/automatisation-environnement-securise.git"
 cd automatisation-environnement-securise
+~~~
+
+Rendre le script exécutable:
+
+~~~bash
 chmod +x mise_en_place_environnement_securise.sh
+~~~
+
+Vérifier la syntaxe:
+
+~~~bash
 bash -n mise_en_place_environnement_securise.sh
 ~~~
 
-Lancer ensuite le menu:
+Lancer le script:
 
 ~~~bash
 ./mise_en_place_environnement_securise.sh
 ~~~
 
-## Utilisation du menu
+Le script affiche un menu interactif.
 
-### `1) Installer`
-
-L’installation:
-
-1. vérifie les commandes et l’espace disponible;
-2. refuse d’écraser un fichier existant;
-3. crée `coffre-luks.img` avec une taille de 5 Go;
-4. applique les permissions `600`;
-5. initialise LUKS;
-6. ouvre temporairement le mapping `coffre_luks`;
-7. crée le système de fichiers ext4;
-8. monte temporairement le coffre;
-9. crée l’arborescence interne;
-10. applique les permissions `700` aux dossiers sensibles;
-11. démonte le coffre;
-12. ferme le mapping LUKS.
-
-À la fin de l’installation, le coffre doit être démonté et fermé.
-
-Si `coffre-luks.img` existe déjà et possède un en-tête LUKS valide, le script ne le reformate pas.
-
-### `2) Ouvrir`
-
-L’ouverture:
-
-1. vérifie que le conteneur existe et qu’il est reconnu comme LUKS;
-2. crée `/dev/mapper/coffre_luks` si le mapping est absent;
-3. crée le point de montage si nécessaire;
-4. monte ext4 dans `montage_coffre`;
-5. vérifie le mapping, le montage et l’arborescence.
-
-Si le coffre est déjà ouvert et monté, le script l’indique sans répéter l’opération.
-
-Si le mapping est créé mais que le montage échoue, le script tente de refermer le mapping créé par l’action.
-
-### `3) Fermer`
-
-La fermeture respecte l’ordre suivant:
-
-1. démonter `montage_coffre`;
-2. fermer le mapping `coffre_luks`;
-3. vérifier que le montage et le mapping ont disparu.
-
-Si le démontage échoue, le mapping reste ouvert afin d’éviter une fermeture dans un état incohérent.
-
-Si le coffre est déjà fermé, le script l’indique sans lancer d’opération destructive.
-
-### `4) GPG`
-
-Cette action ouvre un sous-menu dédié:
+## Menu principal
 
 ~~~text
-1) Générer une paire de clefs
+=== Environnement sécurisé ===
+1) Installer l’environnement
+2) Ouvrir l’environnement
+3) Fermer l’environnement
+4) Vérifier l’environnement
+5) Cryptographie GPG
+6) Configuration SSH
+7) Quitter
+~~~
+
+## Partie I — Mise en place
+
+L’option **Installer l’environnement** crée le coffre sécurisé.
+
+Elle réalise les actions suivantes:
+
+1. création du fichier `coffre.img` de 5 Go
+2. application des permissions `600`
+3. initialisation LUKS
+4. ouverture du conteneur avec le mapping `sec_env`
+5. formatage en ext4
+6. montage dans `montage_coffre`
+7. création de l’arborescence interne
+8. application des permissions
+9. fermeture propre du coffre
+
+Commandes principales utilisées par le script:
+
+~~~bash
+truncate -s 5G coffre.img
+chmod 600 coffre.img
+sudo cryptsetup luksFormat coffre.img
+sudo cryptsetup open coffre.img sec_env
+sudo mkfs.ext4 /dev/mapper/sec_env
+sudo mount /dev/mapper/sec_env montage_coffre
+~~~
+
+## Arborescence du coffre
+
+Après installation, le coffre contient:
+
+~~~text
+montage_coffre/
+├── gpg/
+│   ├── public/
+│   └── private/
+├── ssh/
+│   ├── config/
+│   └── keys/
+└── aliases/
+~~~
+
+| Dossier | Rôle |
+|---|---|
+| `gpg/public` | stockage des clefs publiques GPG exportées |
+| `gpg/private` | stockage des clefs privées GPG exportées |
+| `ssh/config` | fichier de configuration SSH |
+| `ssh/keys` | clefs SSH importées |
+| `aliases` | fichier d’alias contenant `evsh` |
+
+## Partie II — Cryptographie GPG
+
+Le menu GPG permet de:
+
+~~~text
+=== Cryptographie GPG ===
+1) Créer une clef GPG et exporter la clef publique
 2) Exporter une clef publique vers le coffre
 3) Exporter une clef privée vers le coffre
 4) Importer une clef publique depuis le coffre
@@ -168,223 +201,218 @@ Cette action ouvre un sous-menu dédié:
 6) Retour
 ~~~
 
-La génération reste interactive avec `gpg --full-generate-key`: l’algorithme, la taille, l’identité, la date d’expiration et la phrase secrète ne sont pas imposés ni stockés par le script.
+### Création de clef GPG
 
-Les exports utilisent l’empreinte complète de la clef dans le nom du fichier:
+Le script utilise:
 
-- clef publique: `gpg/public/<empreinte>.asc`;
-- clef privée: `gpg/private/<empreinte>-secret.asc`.
+~~~bash
+gpg --full-generate-key
+~~~
 
-L’export privé exige une confirmation explicite. Le fichier est créé avec les permissions `600` dans un dossier `700`. Aucun export existant n’est écrasé silencieusement.
+GPG demande directement les paramètres de la clef et la phrase secrète.
 
-Les imports sont limités aux fichiers `.asc` et `.gpg` présents dans le dossier public ou privé concerné. L’import d’une clef privée exige également une confirmation explicite.
+La phrase secrète n’est jamais stockée dans le script.
 
-### `5) Quitter`
+### Export de clef publique
 
-Le script s’arrête sans modifier l’état du coffre.
-
-## États du coffre
-
-| État | Mapping | Montage | Comportement |
-|---|---|---|---|
-| Fermé | absent | inactif | `Ouvrir` crée le mapping puis monte ext4 |
-| Ouvert | présent | actif | `Fermer` démonte puis ferme LUKS |
-| Partiellement ouvert | présent | inactif | `Ouvrir` tente uniquement le montage |
-| Incohérent | absent | actif | le script refuse de poursuivre normalement |
-
-## Arborescence interne
+Une clef publique est exportée dans:
 
 ~~~text
-gpg/
-├── public/
-└── private/
-ssh/
-├── config/
-└── keys/
-aliases/
+montage_coffre/gpg/public/
 ~~~
 
-Permissions initiales:
-
-- `coffre-luks.img`: `600`, soit `rw-------`;
-- `gpg/private`: `700`, soit `rwx------`;
-- `ssh/keys`: `700`, soit `rwx------`.
-
-## Validation statique
+Commande utilisée:
 
 ~~~bash
-bash -n mise_en_place_environnement_securise.sh
+gpg --export --armor <identifiant>
 ~~~
 
-La commande ne doit produire aucune erreur.
+### Export de clef privée
 
-## Validation du coffre
+Une clef privée est exportée dans:
+
+~~~text
+montage_coffre/gpg/private/
+~~~
+
+Commande utilisée:
 
 ~~~bash
-ls -lh coffre-luks.img
-stat -c "%a %n" coffre-luks.img
-sudo cryptsetup isLuks coffre-luks.img
+gpg --export-secret-keys --armor <identifiant>
 ~~~
 
-Résultats attendus:
+Le script demande une confirmation avant l’export privé.
 
-- le fichier existe et affiche une taille de 5 Go;
-- les permissions sont `600`;
-- `cryptsetup isLuks` réussit.
+## Partie III — Configuration SSH
 
-## Validation de l’état ouvert
+Le menu SSH permet de:
 
-Après le choix `Ouvrir`:
+~~~text
+=== Configuration SSH ===
+1) Créer un template SSH et l’alias evsh
+2) Importer une configuration SSH existante par host
+3) Retour
+~~~
+
+### Template SSH
+
+Le fichier de configuration est créé ici:
+
+~~~text
+montage_coffre/ssh/config/config
+~~~
+
+Il peut être utilisé avec:
 
 ~~~bash
-if test -e /dev/mapper/coffre_luks; then
-    echo "OK: mapping présent"
-else
-    echo "ERREUR: mapping absent"
-fi
-
-if mountpoint -q montage_coffre; then
-    echo "OK: montage actif"
-else
-    echo "ERREUR: montage inactif"
-fi
+ssh -F montage_coffre/ssh/config/config exemple
 ~~~
 
-## Validation de l’état fermé
+### Alias `evsh`
 
-Après le choix `Fermer`:
+Le script crée un fichier d’alias dans:
+
+~~~text
+montage_coffre/aliases/evsh_aliases
+~~~
+
+Il contient au minimum:
 
 ~~~bash
-if test -e /dev/mapper/coffre_luks; then
-    echo "ERREUR: mapping encore présent"
-else
-    echo "OK: mapping absent"
-fi
-
-if mountpoint -q montage_coffre; then
-    echo "ERREUR: montage encore actif"
-else
-    echo "OK: montage inactif"
-fi
+alias evsh="ssh -F montage_coffre/ssh/config/config"
 ~~~
 
-## Sécurité et versionnement
+Un lien symbolique est créé vers:
 
-Ne jamais enregistrer dans Git:
+~~~text
+~/.evsh_aliases
+~~~
 
-- `coffre-luks.img`;
-- le contenu de `montage_coffre/`;
-- une phrase secrète LUKS;
-- une clef privée;
-- un export de clef `.asc` ou `.gpg`;
-- un fichier `.env` contenant des secrets;
-- des journaux contenant des données sensibles.
-
-Contrôles avant un commit:
+Pour utiliser l’alias:
 
 ~~~bash
-git diff --check
-git status --short
-git diff -- README.md .gitignore mise_en_place_environnement_securise.sh
-git diff --cached --check
-git diff --cached
+source ~/.evsh_aliases
+evsh exemple
 ~~~
+
+### Import SSH par `Host`
+
+Le script lit:
+
+~~~text
+$HOME/.ssh/config
+~~~
+
+Il liste les hôtes disponibles, par exemple:
+
+~~~text
+p1
+p2
+p3
+~~~
+
+Après le choix d’un hôte, le script:
+
+1. importe le bloc `Host` correspondant dans le coffre
+2. cherche la ligne `IdentityFile`
+3. copie la clef privée SSH dans `ssh/keys`
+4. copie la clef publique si elle existe
+5. modifie `IdentityFile` pour pointer vers la clef stockée dans le coffre
+
+## Partie IV — Utilisation
+
+Le script permet directement:
+
+| Besoin | Option du menu |
+|---|---|
+| installer l’environnement | `Installer l’environnement` |
+| ouvrir l’environnement | `Ouvrir l’environnement` |
+| fermer l’environnement | `Fermer l’environnement` |
+| exporter des clefs GPG vers le coffre | `Cryptographie GPG` |
+| importer des clefs GPG vers le trousseau | `Cryptographie GPG` |
+| créer une configuration SSH | `Configuration SSH` |
+| importer une configuration SSH existante | `Configuration SSH` |
+
+## Validation
+
+Vérifier que le coffre existe:
+
+~~~bash
+ls -lh coffre.img
+~~~
+
+Vérifier les permissions:
+
+~~~bash
+stat -c "%a %n" coffre.img
+~~~
+
+Résultat attendu:
+
+~~~text
+600 coffre.img
+~~~
+
+Vérifier que le fichier est bien un conteneur LUKS:
+
+~~~bash
+sudo cryptsetup isLuks coffre.img
+~~~
+
+Vérifier que le coffre est fermé:
+
+~~~bash
+mountpoint -q montage_coffre || echo "Coffre non monté"
+test ! -e /dev/mapper/sec_env && echo "Mapping fermé"
+~~~
+
+## Permissions
+
+| Élément | Permission | Raison |
+|---|---|---|
+| `coffre.img` | `600` | protéger le fichier conteneur |
+| `montage_coffre/` | `700` | limiter l’accès au coffre monté |
+| `gpg/private/` | `700` | protéger les exports de clefs privées |
+| `ssh/keys/` | `700` | protéger les clefs SSH |
+| clef privée GPG | `600` | limiter la lecture au propriétaire |
+| clef privée SSH | `600` | respecter les attentes SSH |
 
 ## Points de vigilance
 
-- relire la cible avant `cryptsetup luksFormat` et `mkfs.ext4`;
-- ne jamais utiliser un disque réel ou une partition comme cible;
-- ne jamais reformater `coffre-luks.img` pour résoudre un simple problème d’ouverture;
-- ne jamais stocker la phrase secrète LUKS dans le script, Notion, Git ou un journal;
-- toujours démonter le système de fichiers avant `cryptsetup close`;
-- ne pas fermer le mapping si le démontage échoue;
-- ne pas considérer l’existence du conteneur comme une preuve qu’il est ouvert ou monté.
+- ne jamais stocker la phrase secrète LUKS dans le script
+- ne jamais stocker une phrase secrète GPG dans le script
+- ne jamais versionner `coffre.img`
+- ne jamais versionner `montage_coffre/`
+- ne jamais versionner une clef privée
+- ne jamais lancer `cryptsetup luksFormat` sur un disque réel
+- ne pas relancer l’installation si le coffre existe déjà
+- toujours fermer le coffre après utilisation
 
-## Validation GPG
+## `.gitignore` conseillé
 
-Après ouverture du coffre, vérifier les dossiers et leurs permissions:
-
-~~~bash
-stat -c '%U:%G %a %n' \
-    montage_coffre/gpg \
-    montage_coffre/gpg/public \
-    montage_coffre/gpg/private
+~~~gitignore
+coffre.img
+montage_coffre/
+*.asc
+*.gpg
+*.key
+*.pem
+.env
+*.log
+*.tmp
 ~~~
 
-Résultats attendus:
+## Résumé
 
-- l’utilisateur courant possède l’arborescence GPG;
-- `gpg/private` possède les permissions `700`;
-- un export privé possède les permissions `600`;
-- les fichiers exportés sont non vides;
-- l’empreinte importée apparaît dans `gpg --list-keys` ou `gpg --list-secret-keys`.
+Ce projet fournit un script Bash simple et fonctionnel qui répond aux quatre parties du sujet:
 
-Inventaire du trousseau, sans affichage de matière secrète:
-
-~~~bash
-gpg --list-keys --keyid-format LONG --fingerprint
-gpg --list-secret-keys --keyid-format LONG --fingerprint
-~~~
-
-## Limites actuelles
-
-Le script couvre actuellement le cycle du coffre LUKS et la gestion GPG. Les fonctionnalités suivantes restent à intégrer au script Bash final:
-
-- fichier modèle de configuration SSH utilisable avec `ssh -F`;
-- import d’un hôte depuis `$HOME/.ssh/config`;
-- copie des clefs SSH et adaptation de `IdentityFile`;
-- fichier d’alias contenant `evsh` et lien symbolique associé;
-- documentation et présentation finales.
+- **mise en place**: coffre de 5 Go dans un fichier, LUKS, ext4
+- **cryptographie**: création, export et import de clefs GPG
+- **configuration**: template SSH, alias `evsh`, import par `Host`
+- **utilisation**: menu pour installer, ouvrir et fermer l’environnement
 
 
-
-mise_en_place_environnement_securise.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Variables à confirmer.
-COFFRE_FICHIER="coffre-luks.img"
-COFFRE_MAPPING="coffre_luks"
-COFFRE_MONTAGE="montage_coffre"
-
-# Vérifications minimales avant création.
-test -n "$COFFRE_FICHIER"
-test -n "$COFFRE_MAPPING"
-test -n "$COFFRE_MONTAGE"
-test ! -e "$COFFRE_FICHIER"
-
-# Créer le fichier conteneur de 5 Go.
-truncate -s 5G "$COFFRE_FICHIER"
-chmod 600 "$COFFRE_FICHIER"
-
-# Initialiser LUKS.
-echo "$COFFRE_FICHIER"
-ls -lh "$COFFRE_FICHIER"
-sudo cryptsetup luksFormat "$COFFRE_FICHIER"
-sudo cryptsetup isLuks "$COFFRE_FICHIER"
-
-# Ouvrir le coffre et créer ext4.
-sudo cryptsetup open "$COFFRE_FICHIER" "$COFFRE_MAPPING"
-ls -l "/dev/mapper/$COFFRE_MAPPING"
-sudo mkfs.ext4 "/dev/mapper/$COFFRE_MAPPING"
-
-# Monter temporairement.
-sudo mkdir -p "$COFFRE_MONTAGE"
-sudo mount "/dev/mapper/$COFFRE_MAPPING" "$COFFRE_MONTAGE"
-
-# Créer l’arborescence minimale.
-sudo mkdir -p "$COFFRE_MONTAGE/gpg/public"
-sudo mkdir -p "$COFFRE_MONTAGE/gpg/private"
-sudo mkdir -p "$COFFRE_MONTAGE/ssh/config"
-sudo mkdir -p "$COFFRE_MONTAGE/ssh/keys"
-sudo mkdir -p "$COFFRE_MONTAGE/aliases"
-
-# Protéger les premiers dossiers sensibles.
-sudo chmod 700 "$COFFRE_MONTAGE/gpg/private"
-sudo chmod 700 "$COFFRE_MONTAGE/ssh/keys"
-
-# Refermer proprement.
-sudo umount "$COFFRE_MONTAGE"
-sudo cryptsetup close "$COFFRE_MAPPING"
-
-
+================================================
+FILE: mise_en_place_environnement_securise.sh
+================================================
+Voir la tâche dédiée au code final pour la version complète du script.

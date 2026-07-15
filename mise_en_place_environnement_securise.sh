@@ -1,705 +1,440 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+COFFRE_FICHIER="${COFFRE_FICHIER:-coffre.img}"
+COFFRE_MAPPING="${COFFRE_MAPPING:-sec_env}"
+COFFRE_MONTAGE="${COFFRE_MONTAGE:-montage_coffre}"
+TAILLE_COFFRE="${TAILLE_COFFRE:-5G}"
 
-COFFRE_FICHIER="coffre-luks.img"
-COFFRE_MAPPING="coffre_luks"
-COFFRE_MONTAGE="montage_coffre"
-TAILLE_COFFRE="5G"
+ALIAS_FICHIER="${ALIAS_FICHIER:-$HOME/.evsh_aliases}"
+
+DOSSIER_GPG_PUBLIC="gpg/public"
+DOSSIER_GPG_PRIVATE="gpg/private"
+DOSSIER_SSH_CONFIG="ssh/config"
+DOSSIER_SSH_KEYS="ssh/keys"
+DOSSIER_ALIAS="aliases"
+
+GPG_PUBLIC="$COFFRE_MONTAGE/gpg/public"
+GPG_PRIVATE="$COFFRE_MONTAGE/gpg/private"
+SSH_CONFIG_DIR="$COFFRE_MONTAGE/ssh/config"
+SSH_KEYS_DIR="$COFFRE_MONTAGE/ssh/keys"
+ALIAS_DIR="$COFFRE_MONTAGE/aliases"
+ALIAS_LINK="$HOME/.evsh_aliases"
 
 info() {
-    printf '[INFO] %s\n' "$*"
-}
-
-succes() {
-    printf '[OK] %s\n' "$*"
+    echo "[INFO] $1"
 }
 
 erreur() {
-    printf '[ERREUR] %s\n' "$*" >&2
+    echo "[ERREUR] $1" >&2
 }
 
-mapping_present() {
-    test -e "/dev/mapper/$COFFRE_MAPPING"
+mapper() {
+    echo "/dev/mapper/$COFFRE_MAPPING"
 }
 
-montage_actif() {
-    mountpoint -q "$COFFRE_MONTAGE"
+pause() {
+    read -r -p "Appuyer sur Entrée pour continuer..."
 }
 
 verifier_commandes() {
-    local commande
-    local -a commandes=(
-        bash sudo cryptsetup mkfs.ext4 mount umount mountpoint
-        mkdir chmod chown truncate df tail stat find dirname sort awk gpg id
-    )
-
-    for commande in "${commandes[@]}"; do
-        if command -v "$commande" >/dev/null 2>&1; then
-            info "Commande disponible: $commande"
-        else
+    for commande in cryptsetup mkfs.ext4 mount umount mountpoint mkdir chmod chown truncate gpg awk sed find cp ln basename; do
+        command -v "$commande" >/dev/null 2>&1 || {
             erreur "Commande manquante: $commande"
             return 1
-        fi
-    done
-
-    succes "Toutes les commandes nécessaires sont disponibles."
-}
-
-verifier_espace_disponible() {
-    local espace_disponible
-    espace_disponible="$(df --output=avail -k . | tail -n 1)"
-
-    if (( espace_disponible >= 5 * 1024 * 1024 )); then
-        succes "L’espace disponible est suffisant."
-    else
-        erreur "Moins de 5 Gio sont disponibles dans le dossier du projet."
-        return 1
-    fi
-}
-
-verifier_conteneur_luks() {
-    if test -f "$COFFRE_FICHIER"; then
-        if sudo cryptsetup isLuks "$COFFRE_FICHIER"; then
-            succes "Le conteneur LUKS est valide."
-        else
-            erreur "$COFFRE_FICHIER n’est pas un conteneur LUKS valide."
-            return 1
-        fi
-    else
-        erreur "Le conteneur $COFFRE_FICHIER est introuvable."
-        return 1
-    fi
-}
-
-verifier_arborescence() {
-    local dossier
-    local permission
-    local -a dossiers=(
-        gpg/public
-        gpg/private
-        ssh/config
-        ssh/keys
-        aliases
-    )
-
-    if montage_actif; then
-        info "Le coffre est monté."
-    else
-        erreur "Le coffre doit être monté pour vérifier son arborescence."
-        return 1
-    fi
-
-    for dossier in "${dossiers[@]}"; do
-        if sudo test -d "$COFFRE_MONTAGE/$dossier"; then
-            info "Dossier présent: $dossier"
-        else
-            erreur "Dossier manquant dans le coffre: $dossier"
-            return 1
-        fi
-    done
-
-    permission="$(sudo stat -c '%a' "$COFFRE_MONTAGE/gpg/private")"
-    if [[ "$permission" == "700" ]]; then
-        info "Les permissions de gpg/private sont correctes."
-    else
-        erreur "Permission inattendue pour gpg/private: $permission"
-        return 1
-    fi
-
-    permission="$(sudo stat -c '%a' "$COFFRE_MONTAGE/ssh/keys")"
-    if [[ "$permission" == "700" ]]; then
-        info "Les permissions de ssh/keys sont correctes."
-    else
-        erreur "Permission inattendue pour ssh/keys: $permission"
-        return 1
-    fi
-}
-
-nettoyer_etat_partiel() {
-    if montage_actif; then
-        if sudo umount "$COFFRE_MONTAGE"; then
-            succes "Le montage partiel est démonté."
-        else
-            erreur "Le montage partiel n’a pas pu être démonté."
-            return 1
-        fi
-    else
-        info "Aucun montage partiel à démonter."
-    fi
-
-    if mapping_present; then
-        if sudo cryptsetup close "$COFFRE_MAPPING"; then
-            succes "Le mapping partiel est fermé."
-        else
-            erreur "Le mapping partiel n’a pas pu être fermé."
-            return 1
-        fi
-    else
-        info "Aucun mapping partiel à fermer."
-    fi
-}
-
-installer_coffre() {
-    if test -e "$COFFRE_FICHIER"; then
-        if sudo cryptsetup isLuks "$COFFRE_FICHIER"; then
-            info "Le coffre existe déjà. Aucune réinstallation n’est effectuée."
-            return 0
-        fi
-
-        erreur "$COFFRE_FICHIER existe mais n’est pas un conteneur LUKS valide."
-        return 1
-    fi
-
-    if verifier_espace_disponible; then
-        info "La création du conteneur peut commencer."
-    else
-        return 1
-    fi
-
-    if truncate -s "$TAILLE_COFFRE" "$COFFRE_FICHIER"; then
-        succes "Le fichier conteneur est créé."
-    else
-        erreur "Impossible de créer le fichier conteneur."
-        return 1
-    fi
-
-    if chmod 600 "$COFFRE_FICHIER"; then
-        succes "Les permissions 600 sont appliquées au conteneur."
-    else
-        erreur "Impossible d’appliquer les permissions au conteneur."
-        return 1
-    fi
-
-    if sudo cryptsetup luksFormat "$COFFRE_FICHIER"; then
-        succes "L’initialisation LUKS est terminée."
-    else
-        erreur "Échec de l’initialisation LUKS."
-        return 1
-    fi
-
-    if verifier_conteneur_luks; then
-        info "Le conteneur peut être ouvert."
-    else
-        return 1
-    fi
-
-    if sudo cryptsetup open "$COFFRE_FICHIER" "$COFFRE_MAPPING"; then
-        succes "Le mapping LUKS est ouvert."
-    else
-        erreur "Échec de l’ouverture LUKS."
-        return 1
-    fi
-
-    if sudo mkfs.ext4 "/dev/mapper/$COFFRE_MAPPING"; then
-        succes "Le système de fichiers ext4 est créé."
-    else
-        erreur "Échec de la création du système de fichiers ext4."
-        nettoyer_etat_partiel
-        return 1
-    fi
-
-    if sudo mkdir -p "$COFFRE_MONTAGE"; then
-        info "Le point de montage est prêt."
-    else
-        erreur "Impossible de créer le point de montage."
-        nettoyer_etat_partiel
-        return 1
-    fi
-
-    if sudo mount "/dev/mapper/$COFFRE_MAPPING" "$COFFRE_MONTAGE"; then
-        succes "Le coffre est monté temporairement."
-    else
-        erreur "Échec du montage du coffre."
-        nettoyer_etat_partiel
-        return 1
-    fi
-
-    sudo mkdir -p \
-        "$COFFRE_MONTAGE/gpg/public" \
-        "$COFFRE_MONTAGE/gpg/private" \
-        "$COFFRE_MONTAGE/ssh/config" \
-        "$COFFRE_MONTAGE/ssh/keys" \
-        "$COFFRE_MONTAGE/aliases"
-
-    # Les fonctions GPG s’exécutent avec l’utilisateur courant, pas avec sudo.
-    sudo chown -R "$(id -u):$(id -g)" "$COFFRE_MONTAGE/gpg"
-    chmod 700 "$COFFRE_MONTAGE/gpg" "$COFFRE_MONTAGE/gpg/private"
-    chmod 755 "$COFFRE_MONTAGE/gpg/public"
-
-    sudo chmod 700 "$COFFRE_MONTAGE/ssh/keys"
-
-    verifier_arborescence
-    sudo umount "$COFFRE_MONTAGE"
-    sudo cryptsetup close "$COFFRE_MAPPING"
-    succes "Installation terminée: le coffre est démonté et fermé."
-}
-
-ouvrir_coffre() {
-    local mapping_cree=0
-
-    if verifier_conteneur_luks; then
-        info "Le conteneur peut être utilisé."
-    else
-        return 1
-    fi
-
-    if montage_actif; then
-        if mapping_present; then
-            info "Le coffre est déjà ouvert et monté."
-            return 0
-        else
-            erreur "État incohérent: montage actif sans mapping $COFFRE_MAPPING."
-            return 1
-        fi
-    else
-        info "Le point de montage n’est pas actif."
-    fi
-
-    if mapping_present; then
-        info "Le mapping existe déjà. Seul le montage sera effectué."
-    else
-        if sudo cryptsetup open "$COFFRE_FICHIER" "$COFFRE_MAPPING"; then
-            mapping_cree=1
-            succes "Le mapping LUKS est ouvert."
-        else
-            erreur "Impossible d’ouvrir le coffre."
-            return 1
-        fi
-    fi
-
-    if sudo mkdir -p "$COFFRE_MONTAGE"; then
-        info "Le point de montage est prêt."
-    else
-        erreur "Impossible de créer le point de montage."
-        return 1
-    fi
-
-    if sudo mount "/dev/mapper/$COFFRE_MAPPING" "$COFFRE_MONTAGE"; then
-        succes "Le coffre est monté."
-    else
-        erreur "Impossible de monter le coffre."
-        if (( mapping_cree == 1 )); then
-            sudo cryptsetup close "$COFFRE_MAPPING"
-        else
-            info "Le mapping existait avant cette action."
-        fi
-        return 1
-    fi
-
-    if verifier_arborescence; then
-        succes "Le coffre est ouvert sur $COFFRE_MONTAGE."
-    else
-        nettoyer_etat_partiel
-        return 1
-    fi
-}
-
-fermer_coffre() {
-    if montage_actif; then
-        if sudo umount "$COFFRE_MONTAGE"; then
-            succes "Le coffre est démonté."
-        else
-            erreur "Le démontage a échoué. Le mapping reste ouvert."
-            return 1
-        fi
-    else
-        info "Le coffre est déjà démonté."
-    fi
-
-    if mapping_present; then
-        if sudo cryptsetup close "$COFFRE_MAPPING"; then
-            succes "Le mapping LUKS est fermé."
-        else
-            erreur "La fermeture du mapping LUKS a échoué."
-            return 1
-        fi
-    else
-        info "Le mapping LUKS est déjà fermé."
-    fi
-}
-
-verifier_coffre_gpg() {
-    if mapping_present; then
-        if montage_actif; then
-            info "Le coffre est ouvert et monté."
-        else
-            erreur "Le mapping existe, mais le coffre n’est pas monté."
-            return 1
-        fi
-    else
-        erreur "Le mapping LUKS est absent."
-        return 1
-    fi
-
-    if test -d "$COFFRE_MONTAGE/gpg/public"; then
-        info "Le dossier gpg/public est accessible."
-    else
-        erreur "Le dossier gpg/public est absent ou inaccessible."
-        return 1
-    fi
-
-    if test -d "$COFFRE_MONTAGE/gpg/private"; then
-        info "Le dossier gpg/private est accessible."
-    else
-        erreur "Le dossier gpg/private est absent ou inaccessible."
-        return 1
-    fi
-
-    if [[ "$(stat -c '%a' "$COFFRE_MONTAGE/gpg/private")" == "700" ]]; then
-        info "Les permissions de gpg/private sont correctes."
-    else
-        erreur "Le dossier gpg/private doit avoir les permissions 700."
-        return 1
-    fi
-
-    if test -w "$COFFRE_MONTAGE/gpg/public"; then
-        if test -w "$COFFRE_MONTAGE/gpg/private"; then
-            succes "Les dossiers GPG sont accessibles en écriture."
-        else
-            erreur "Le dossier gpg/private n’est pas accessible en écriture."
-            return 1
-        fi
-    else
-        erreur "Le dossier gpg/public n’est pas accessible en écriture."
-        return 1
-    fi
-}
-
-empreinte_publique() {
-    local identifiant="$1"
-    gpg --batch --with-colons --list-keys "$identifiant" 2>/dev/null \
-        | awk -F: '$1 == "fpr" { print $10; exit }'
-}
-
-empreinte_secrete() {
-    local identifiant="$1"
-    gpg --batch --with-colons --list-secret-keys "$identifiant" 2>/dev/null \
-        | awk -F: '$1 == "fpr" { print $10; exit }'
-}
-
-generer_clef_gpg() {
-    info "GnuPG va demander les paramètres et la phrase secrète de la nouvelle clef."
-
-    if gpg --full-generate-key; then
-        succes "La génération GPG est terminée."
-        gpg --list-secret-keys --keyid-format LONG --fingerprint
-    else
-        erreur "La génération GPG a échoué ou a été annulée."
-        return 1
-    fi
-}
-
-exporter_clef_publique() {
-    local identifiant
-    local empreinte
-    local destination
-
-    if verifier_coffre_gpg; then
-        info "Le coffre peut recevoir l’export public."
-    else
-        return 1
-    fi
-
-    read -r -p 'Identifiant ou empreinte de la clef publique: ' identifiant
-    if test -n "$identifiant"; then
-        info "Identifiant reçu."
-    else
-        erreur "Identifiant vide."
-        return 1
-    fi
-
-    empreinte="$(empreinte_publique "$identifiant")"
-    if test -n "$empreinte"; then
-        info "Empreinte trouvée: $empreinte"
-    else
-        erreur "Aucune clef publique n’a été trouvée."
-        return 1
-    fi
-
-    destination="$COFFRE_MONTAGE/gpg/public/$empreinte.asc"
-    if test -e "$destination"; then
-        erreur "Le fichier existe déjà: $destination"
-        return 1
-    fi
-
-    if gpg --armor --output "$destination" --export "$empreinte"; then
-        chmod 644 "$destination"
-    else
-        erreur "L’export de la clef publique a échoué."
-        return 1
-    fi
-
-    if test -s "$destination"; then
-        succes "Clef publique exportée vers $destination."
-    else
-        erreur "Le fichier exporté est vide."
-        return 1
-    fi
-}
-
-exporter_clef_privee() {
-    local identifiant
-    local confirmation
-    local empreinte
-    local destination
-
-    if verifier_coffre_gpg; then
-        info "Le coffre peut recevoir l’export privé."
-    else
-        return 1
-    fi
-
-    printf '%s\n' 'Attention: une clef privée permet d’usurper son propriétaire si elle est compromise.'
-    read -r -p 'Confirmer l’export privé en saisissant EXPORTER: ' confirmation
-    if [[ "$confirmation" == "EXPORTER" ]]; then
-        info "Export privé confirmé."
-    else
-        info "Export privé annulé."
-        return 0
-    fi
-
-    read -r -p 'Identifiant ou empreinte de la clef secrète: ' identifiant
-    if test -n "$identifiant"; then
-        info "Identifiant reçu."
-    else
-        erreur "Identifiant vide."
-        return 1
-    fi
-
-    empreinte="$(empreinte_secrete "$identifiant")"
-    if test -n "$empreinte"; then
-        info "Empreinte secrète trouvée."
-    else
-        erreur "Aucune clef secrète n’a été trouvée."
-        return 1
-    fi
-
-    destination="$COFFRE_MONTAGE/gpg/private/$empreinte-secret.asc"
-    if test -e "$destination"; then
-        erreur "Le fichier existe déjà: $destination"
-        return 1
-    fi
-
-    if (
-        umask 077
-        gpg --armor --output "$destination" --export-secret-keys "$empreinte"
-    ); then
-        chmod 600 "$destination"
-    else
-        erreur "L’export de la clef privée a échoué."
-        return 1
-    fi
-
-    if test -s "$destination"; then
-        succes "Clef privée exportée vers $destination avec les permissions 600."
-    else
-        erreur "Le fichier privé exporté est vide."
-        return 1
-    fi
-}
-
-selectionner_fichier_gpg() {
-    local dossier="$1"
-    local invite="$2"
-    local -a fichiers=()
-    local choix
-
-    mapfile -t fichiers < <(
-        find "$dossier" -maxdepth 1 -type f \
-            \( -name '*.asc' -o -name '*.gpg' \) -print | sort
-    )
-
-    if (( ${#fichiers[@]} > 0 )); then
-        printf '%s\n' "$invite" >&2
-    else
-        erreur "Aucun fichier .asc ou .gpg dans $dossier."
-        return 1
-    fi
-    select choix in "${fichiers[@]}" 'Annuler'; do
-        if [[ "$choix" == "Annuler" ]]; then
-            return 1
-        fi
-
-        if test -n "${choix:-}"; then
-            printf '%s\n' "$choix"
-            return 0
-        fi
-
-        erreur "Sélection invalide."
+        }
     done
 }
 
-importer_clef_publique() {
-    local fichier
+installer() {
+    verifier_commandes || return 1
 
-    if verifier_coffre_gpg; then
-        info "Le coffre peut fournir une clef publique."
-    else
+    if [ -e "$COFFRE_FICHIER" ]; then
+        erreur "Le fichier $COFFRE_FICHIER existe déjà"
         return 1
     fi
 
-    if fichier="$(selectionner_fichier_gpg \
-        "$COFFRE_MONTAGE/gpg/public" \
-        'Choisir une clef publique à importer:')"; then
-        if gpg --import "$fichier"; then
-            succes "La clef publique est importée."
-            gpg --list-keys --keyid-format LONG --fingerprint
-        else
-            erreur "L’import de la clef publique a échoué."
-            return 1
-        fi
-    else
-        info "Aucune clef publique n’a été sélectionnée."
+    info "Création du fichier conteneur de 5 Go"
+    truncate -s "$TAILLE_COFFRE" "$COFFRE_FICHIER"
+    chmod 600 "$COFFRE_FICHIER"
+
+    info "Initialisation LUKS"
+    sudo cryptsetup luksFormat "$COFFRE_FICHIER"
+
+    info "Ouverture du coffre"
+    sudo cryptsetup open "$COFFRE_FICHIER" "$COFFRE_MAPPING"
+
+    info "Formatage ext4"
+    sudo mkfs.ext4 "$(mapper)"
+
+    info "Montage du coffre"
+    sudo mkdir -p "$COFFRE_MONTAGE"
+    sudo mount "$(mapper)" "$COFFRE_MONTAGE"
+
+    info "Création des dossiers internes"
+    sudo mkdir -p "$GPG_PUBLIC" "$GPG_PRIVATE" "$SSH_CONFIG_DIR" "$SSH_KEYS_DIR" "$ALIAS_DIR"
+
+    sudo chown -R "$(id -u):$(id -g)" "$COFFRE_MONTAGE"
+
+    chmod 600 "$COFFRE_FICHIER"
+    chmod 700 "$COFFRE_MONTAGE"
+    chmod 700 "$COFFRE_MONTAGE/gpg"
+    chmod 755 "$GPG_PUBLIC"
+    chmod 700 "$GPG_PRIVATE"
+    chmod 700 "$COFFRE_MONTAGE/ssh"
+    chmod 700 "$SSH_KEYS_DIR"
+    chmod 700 "$ALIAS_DIR"
+
+    fermer
+
+    info "Installation terminée"
+}
+
+ouvrir() {
+    verifier_commandes || return 1
+
+    if [ ! -f "$COFFRE_FICHIER" ]; then
+        erreur "Le coffre $COFFRE_FICHIER est introuvable"
+        return 1
+    fi
+
+    if [ ! -e "$(mapper)" ]; then
+        info "Ouverture du conteneur LUKS"
+        sudo cryptsetup open "$COFFRE_FICHIER" "$COFFRE_MAPPING"
+    fi
+
+    sudo mkdir -p "$COFFRE_MONTAGE"
+
+    if ! mountpoint -q "$COFFRE_MONTAGE"; then
+        info "Montage du système de fichiers"
+        sudo mount "$(mapper)" "$COFFRE_MONTAGE"
+    fi
+
+    info "Coffre ouvert dans $COFFRE_MONTAGE"
+}
+
+fermer() {
+    if mountpoint -q "$COFFRE_MONTAGE"; then
+        info "Démontage du coffre"
+        sudo umount "$COFFRE_MONTAGE"
+    fi
+
+    if [ -e "$(mapper)" ]; then
+        info "Fermeture du mapping LUKS"
+        sudo cryptsetup close "$COFFRE_MAPPING"
+    fi
+
+    info "Coffre fermé"
+}
+
+verifier() {
+    if [ ! -f "$COFFRE_FICHIER" ]; then
+        erreur "Le coffre est introuvable"
+        return 1
+    fi
+
+    ls -lh "$COFFRE_FICHIER"
+    stat -c "%a %n" "$COFFRE_FICHIER"
+    sudo cryptsetup isLuks "$COFFRE_FICHIER"
+
+    ouvrir || return 1
+
+    find "$COFFRE_MONTAGE" -maxdepth 3 -type d | sort
+    stat -c "%a %n" "$GPG_PRIVATE" "$SSH_KEYS_DIR"
+
+    fermer
+}
+
+generer_gpg() {
+    verifier_commandes || return 1
+
+    gpg --full-generate-key
+
+    read -r -p "Identifiant de la clef à exporter publiquement dans le coffre: " identifiant
+
+    if [ -n "$identifiant" ]; then
+        export_gpg_public "$identifiant"
     fi
 }
 
-importer_clef_privee() {
-    local fichier
-    local confirmation
+export_gpg_public() {
+    identifiant="$1"
 
-    if verifier_coffre_gpg; then
-        info "Le coffre peut fournir une clef privée."
-    else
+    if [ -z "$identifiant" ]; then
+        erreur "Identifiant vide"
         return 1
     fi
 
-    printf '%s\n' 'Attention: importer une clef privée donne accès aux opérations de signature et de déchiffrement associées.'
-    read -r -p 'Confirmer l’import privé en saisissant IMPORTER: ' confirmation
-    if [[ "$confirmation" == "IMPORTER" ]]; then
-        info "Import privé confirmé."
-    else
-        info "Import privé annulé."
-        return 0
+    ouvrir || return 1
+
+    gpg --export --armor "$identifiant" > "$GPG_PUBLIC/$identifiant.asc"
+    chmod 644 "$GPG_PUBLIC/$identifiant.asc"
+
+    info "Clef publique exportée dans $GPG_PUBLIC/$identifiant.asc"
+}
+
+export_gpg_prive() {
+    identifiant="$1"
+
+    if [ -z "$identifiant" ]; then
+        erreur "Identifiant vide"
+        return 1
     fi
 
-    if fichier="$(selectionner_fichier_gpg \
-        "$COFFRE_MONTAGE/gpg/private" \
-        'Choisir une clef privée à importer:')"; then
-        if gpg --import "$fichier"; then
-            succes "La clef privée est importée."
-            gpg --list-secret-keys --keyid-format LONG --fingerprint
+    ouvrir || return 1
+
+    echo "Attention: une clef privée est sensible."
+    read -r -p "Exporter la clef privée ? Écrire OUI: " confirmation
+
+    if [ "$confirmation" != "OUI" ]; then
+        erreur "Export privé annulé"
+        return 1
+    fi
+
+    gpg --export-secret-keys --armor "$identifiant" > "$GPG_PRIVATE/$identifiant-private.asc"
+    chmod 600 "$GPG_PRIVATE/$identifiant-private.asc"
+
+    info "Clef privée exportée dans $GPG_PRIVATE/$identifiant-private.asc"
+}
+
+import_gpg_public() {
+    ouvrir || return 1
+
+    read -r -p "Nom du fichier public dans gpg/public: " fichier
+
+    if [ -f "$GPG_PUBLIC/$fichier" ]; then
+        gpg --import "$GPG_PUBLIC/$fichier"
+        info "Clef publique importée dans le trousseau"
+    else
+        erreur "Fichier introuvable"
+    fi
+}
+
+import_gpg_prive() {
+    ouvrir || return 1
+
+    read -r -p "Nom du fichier privé dans gpg/private: " fichier
+
+    if [ -f "$GPG_PRIVATE/$fichier" ]; then
+        echo "Attention: import d’une clef privée."
+        read -r -p "Confirmer avec OUI: " confirmation
+
+        if [ "$confirmation" = "OUI" ]; then
+            gpg --import "$GPG_PRIVATE/$fichier"
+            info "Clef privée importée dans le trousseau"
         else
-            erreur "L’import de la clef privée a échoué."
-            return 1
+            erreur "Import annulé"
         fi
     else
-        info "Aucune clef privée n’a été sélectionnée."
+        erreur "Fichier introuvable"
     fi
+}
+
+creer_config_ssh() {
+    ouvrir || return 1
+
+    config="$SSH_CONFIG_DIR/config"
+    alias_file="$ALIAS_DIR/evsh_aliases"
+
+    printf '%s\n' \
+        'Host exemple' \
+        '    HostName 192.0.2.10' \
+        '    User utilisateur' \
+        "    IdentityFile $SSH_KEYS_DIR/id_exemple" \
+        '    IdentitiesOnly yes' \
+        > "$config"
+
+    chmod 600 "$config"
+
+    printf 'alias evsh="ssh -F %s"\n' "$config" > "$alias_file"
+    chmod 600 "$alias_file"
+
+    ln -sf "$alias_file" "$ALIAS_LINK"
+
+    info "Template SSH créé dans $config"
+    info "Alias créé. À charger avec: source $ALIAS_LINK"
+}
+
+import_ssh() {
+    ouvrir || return 1
+
+    fichier_config="$HOME/.ssh/config"
+
+    if [ ! -f "$fichier_config" ]; then
+        erreur "Le fichier $fichier_config est introuvable"
+        return 1
+    fi
+
+    echo "Hosts disponibles:"
+    awk '/^[[:space:]]*Host[[:space:]]+/ { for (i=2; i<=NF; i++) print " - " $i }' "$fichier_config"
+
+    read -r -p "Host à importer: " hote
+
+    if [ -z "$hote" ]; then
+        erreur "Host vide"
+        return 1
+    fi
+
+    bloc="$(awk -v host="$hote" '
+        /^[[:space:]]*Host[[:space:]]+/ {
+            capture=0
+            for (i=2; i<=NF; i++) {
+                if ($i == host) {
+                    capture=1
+                }
+            }
+        }
+        capture {
+            print
+        }
+    ' "$fichier_config")"
+
+    if [ -z "$bloc" ]; then
+        erreur "Host introuvable"
+        return 1
+    fi
+
+    identity="$(printf '%s\n' "$bloc" | awk 'tolower($1)=="identityfile" {print $2; exit}')"
+    identity="${identity/#\~/$HOME}"
+
+    if [ -n "$identity" ] && [ -f "$identity" ]; then
+        cp "$identity" "$SSH_KEYS_DIR/"
+        chmod 600 "$SSH_KEYS_DIR/$(basename "$identity")"
+
+        if [ -f "$identity.pub" ]; then
+            cp "$identity.pub" "$SSH_KEYS_DIR/"
+            chmod 644 "$SSH_KEYS_DIR/$(basename "$identity").pub"
+        fi
+
+        bloc="$(printf '%s\n' "$bloc" | sed "s#^[[:space:]]*IdentityFile[[:space:]].*#    IdentityFile $SSH_KEYS_DIR/$(basename "$identity")#I")"
+    fi
+
+    printf '\n%s\n' "$bloc" >> "$SSH_CONFIG_DIR/config"
+    chmod 600 "$SSH_CONFIG_DIR/config"
+
+    info "Configuration SSH importée pour $hote"
 }
 
 menu_gpg() {
-    local choix
-
     while true; do
-        printf '\n=== Gestion GPG ===\n'
-        printf '1) Générer une paire de clefs\n'
-        printf '2) Exporter une clef publique vers le coffre\n'
-        printf '3) Exporter une clef privée vers le coffre\n'
-        printf '4) Importer une clef publique depuis le coffre\n'
-        printf '5) Importer une clef privée depuis le coffre\n'
-        printf '6) Retour\n'
+        echo
+        echo "Cryptographie GPG"
+        echo "1) Créer une clef GPG et exporter la clef publique"
+        echo "2) Exporter une clef publique vers le coffre"
+        echo "3) Exporter une clef privée vers le coffre"
+        echo "4) Importer une clef publique depuis le coffre"
+        echo "5) Importer une clef privée depuis le coffre"
+        echo "6) Retour"
 
-        if read -r -p 'Choix GPG: ' choix; then
-            case "$choix" in
-                1) generer_clef_gpg ;;
-                2) exporter_clef_publique ;;
-                3) exporter_clef_privee ;;
-                4) importer_clef_publique ;;
-                5) importer_clef_privee ;;
-                6) return 0 ;;
-                *) erreur "Choix invalide. Saisir un nombre de 1 à 6." ;;
-            esac
-        else
-            info "Fin de l’entrée. Retour au menu principal."
-            return 0
-        fi
+        read -r -p "Choix: " choix
+
+        case "$choix" in
+            1)
+                generer_gpg
+                pause
+                ;;
+            2)
+                read -r -p "Identifiant de la clef publique: " identifiant
+                export_gpg_public "$identifiant"
+                pause
+                ;;
+            3)
+                read -r -p "Identifiant de la clef privée: " identifiant
+                export_gpg_prive "$identifiant"
+                pause
+                ;;
+            4)
+                import_gpg_public
+                pause
+                ;;
+            5)
+                import_gpg_prive
+                pause
+                ;;
+            6)
+                return
+                ;;
+            *)
+                echo "Choix invalide"
+                ;;
+        esac
     done
 }
 
-afficher_etat() {
-    printf '\n--- État du coffre ---\n'
+menu_ssh() {
+    while true; do
+        echo
+        echo " Configuration SSH"
+        echo "1) Créer un template SSH et l’alias evsh"
+        echo "2) Importer une configuration SSH existante par host"
+        echo "3) Retour"
 
-    if test -f "$COFFRE_FICHIER"; then
-        printf 'Conteneur: présent\n'
-        printf 'Permissions: %s\n' "$(stat -c '%a' "$COFFRE_FICHIER")"
-    else
-        printf 'Conteneur: absent\n'
-    fi
+        read -r -p "Choix: " choix
 
-    if mapping_present; then
-        printf 'Mapping: présent\n'
-    else
-        printf 'Mapping: absent\n'
-    fi
-
-    if montage_actif; then
-        printf 'Montage: actif sur %s\n' "$COFFRE_MONTAGE"
-    else
-        printf 'Montage: inactif\n'
-    fi
+        case "$choix" in
+            1)
+                creer_config_ssh
+                pause
+                ;;
+            2)
+                import_ssh
+                pause
+                ;;
+            3)
+                return
+                ;;
+            *)
+                echo "Choix invalide"
+                ;;
+        esac
+    done
 }
 
 menu_principal() {
-    local choix
-
     while true; do
-        printf '\n=== Coffre sécurisé ===\n'
-        printf '1) Installer\n'
-        printf '2) Ouvrir\n'
-        printf '3) Fermer\n'
-        printf '4) GPG\n'
-        printf '5) Quitter\n'
+        echo
+        echo "Environnement sécurisé"
+        echo "1) Installer l’environnement"
+        echo "2) Ouvrir l’environnement"
+        echo "3) Fermer l’environnement"
+        echo "4) Vérifier l’environnement"
+        echo "5) Cryptographie GPG"
+        echo "6) Configuration SSH"
+        echo "7) Quitter"
 
-        if read -r -p 'Choix: ' choix; then
-            case "$choix" in
-                1)
-                    if installer_coffre; then
-                        afficher_etat
-                    else
-                        erreur "L’installation a échoué."
-                    fi
-                    ;;
-                2)
-                    if ouvrir_coffre; then
-                        afficher_etat
-                    else
-                        erreur "L’ouverture a échoué."
-                    fi
-                    ;;
-                3)
-                    if fermer_coffre; then
-                        afficher_etat
-                    else
-                        erreur "La fermeture a échoué."
-                    fi
-                    ;;
-                4)
-                    menu_gpg
-                    ;;
-                5)
-                    return 0
-                    ;;
-                *)
-                    erreur "Choix invalide. Saisir un nombre de 1 à 5."
-                    ;;
-            esac
-        else
-            info "Fin de l’entrée. Arrêt du script."
-            return 0
-        fi
+        read -r -p "Choix: " choix
+
+        case "$choix" in
+            1)
+                installer
+                pause
+                ;;
+            2)
+                ouvrir
+                pause
+                ;;
+            3)
+                fermer
+                pause
+                ;;
+            4)
+                verifier
+                pause
+                ;;
+            5)
+                menu_gpg
+                ;;
+            6)
+                menu_ssh
+                ;;
+            7)
+                exit 0
+                ;;
+            *)
+                echo "Choix invalide"
+                ;;
+        esac
     done
 }
 
-main() {
-    if verifier_commandes; then
-        menu_principal
-    else
-        erreur "Le script ne peut pas démarrer."
-        exit 1
-    fi
-}
-
-main "$@"
+menu_principal
