@@ -1,4 +1,7 @@
-Directory structure:
+## Directory structure
+
+```text
+.
 └── luciemn-automatisation-environnement-securise/
     ├── README.md
     ├── mise_en_place_environnement_securise.sh
@@ -10,7 +13,7 @@ Directory structure:
             └── keys/
                 ├── id_ed25519_projet
                 └── id_ed25519_projet.pub
-
+```
 
 
 FILE: README.md
