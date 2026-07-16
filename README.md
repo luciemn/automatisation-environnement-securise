@@ -1,11 +1,20 @@
 Directory structure:
 └── luciemn-automatisation-environnement-securise/
     ├── README.md
-    └── mise_en_place_environnement_securise.sh
+    ├── mise_en_place_environnement_securise.sh
+    └── montage_coffre/
+        ├── aliases/
+        │   └── evsh_aliases
+        └── ssh/
+            ├── config_ssh
+            └── keys/
+                ├── id_ed25519_projet
+                └── id_ed25519_projet.pub
 
-================================================
+
+
 FILE: README.md
-================================================
+
 # automatisation-environnement-securise
 
 ## Objectif
@@ -412,7 +421,7 @@ Ce projet fournit un script Bash simple et fonctionnel qui répond aux quatre pa
 - **utilisation**: menu pour installer, ouvrir et fermer l’environnement
 
 
-================================================
+
 FILE: mise_en_place_environnement_securise.sh
-================================================
+
 Voir la tâche dédiée au code final pour la version complète du script.
