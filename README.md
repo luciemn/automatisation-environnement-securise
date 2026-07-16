@@ -15,9 +15,6 @@
                 └── id_ed25519_projet.pub
 ```
 
-
-FILE: README.md
-
 # automatisation-environnement-securise
 
 ## Objectif
